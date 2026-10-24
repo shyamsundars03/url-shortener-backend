@@ -46,9 +46,16 @@ export class AuthService {
 
   // ─── Login ─────────────────────────────────────────────────────
   async login(dto: LoginDto) {
-    const user = await this.validateUser(dto.email, dto.password);
+    const user = await this.usersService.findByEmail(dto.email);
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+      throw new UnauthorizedException('No account found with this email address');
+    }
+    if (!user.password) {
+      throw new UnauthorizedException('This account uses Google sign-in. Please continue with Google');
+    }
+    const isMatch = await bcrypt.compare(dto.password, user.password);
+    if (!isMatch) {
+      throw new UnauthorizedException('Incorrect password');
     }
     const payload = { sub: user.id, email: user.email, name: user.name };
     const accessToken = this.jwtService.sign(payload, {
