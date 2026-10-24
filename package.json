@@ -4,6 +4,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
+    "dev": "nodemon --watch src --ext ts --exec \"nest start\"",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
@@ -23,15 +24,33 @@
   "description": "URL Shortener Backend API",
   "dependencies": {
     "@nestjs/common": "^12.2.0",
+    "@nestjs/config": "^12.0.1",
     "@nestjs/core": "^12.2.0",
+    "@nestjs/jwt": "^12.0.3",
+    "@nestjs/mongoose": "^12.0.0",
+    "@nestjs/passport": "^12.0.0",
     "@nestjs/platform-express": "^12.2.0",
+    "@supabase/supabase-js": "^2.109.0",
+    "bcrypt": "^6.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "mongoose": "^8.24.7",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "shortid": "^2.2.17"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.2.3",
+    "@types/bcrypt": "^6.0.0",
     "@types/node": "^26.6.5",
+    "@types/passport-google-oauth20": "^2.0.17",
+    "@types/passport-jwt": "^4.0.1",
+    "@types/shortid": "^2.2.0",
+    "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   }
