@@ -8,13 +8,16 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Inject,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Request, Response } from 'express';
-import { AuthService } from './auth.service.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';
 import { JwtAuthGuard } from './guards/jwt-auth.guard.js';
+import { IAuthService, AUTH_SERVICE, AuthTokens } from './interfaces/IAuthService.js';
+import { ApiResponse } from '../common/response/api-response.js';
+import { AUTH_ROUTES } from '../common/constants/api-routes.constant.js';
 
 interface GoogleOAuthUser {
   googleId: string;
@@ -22,63 +25,85 @@ interface GoogleOAuthUser {
   email: string;
 }
 
-@Controller('auth')
+@Controller(AUTH_ROUTES.BASE)
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  private readonly _authService: IAuthService;
 
-  @Post('register')
-  @HttpCode(HttpStatus.CREATED)
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
+  constructor(
+    @Inject(AUTH_SERVICE)
+    authService: IAuthService,
+  ) {
+    this._authService = authService;
   }
 
-  @Get('register')
+  @Post(AUTH_ROUTES.REGISTER)
+  @HttpCode(HttpStatus.CREATED)
+  async register(
+    @Body() dto: RegisterDto,
+  ): Promise<ApiResponse<AuthTokens>> {
+    const tokens = await this._authService.register(dto);
+    return ApiResponse.created(tokens, 'Registration successful');
+  }
+
+  @Get(AUTH_ROUTES.REGISTER)
   async registerPage(@Res() res: Response): Promise<void> {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     res.redirect(`${frontendUrl}/register`);
   }
 
-  @Post('login')
+  @Post(AUTH_ROUTES.LOGIN)
   @HttpCode(HttpStatus.OK)
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  async login(
+    @Body() dto: LoginDto,
+  ): Promise<ApiResponse<AuthTokens>> {
+    const tokens = await this._authService.login(dto);
+    return ApiResponse.ok(tokens, 'Login successful');
   }
 
-  @Get('login')
+  @Get(AUTH_ROUTES.LOGIN)
   async loginPage(@Res() res: Response): Promise<void> {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     res.redirect(`${frontendUrl}/login`);
   }
 
-  @Post('refresh')
+  @Post(AUTH_ROUTES.REFRESH)
   @HttpCode(HttpStatus.OK)
-  refresh(@Body() body: { refresh_token: string }) {
-    return this.authService.refreshTokens(body.refresh_token);
+  async refresh(
+    @Body() body: { refresh_token: string },
+  ): Promise<ApiResponse<AuthTokens>> {
+    const tokens = await this._authService.refreshTokens(body.refresh_token);
+    return ApiResponse.ok(tokens, 'Token refreshed successfully');
   }
 
-  @Post('logout')
+  @Post(AUTH_ROUTES.LOGOUT)
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  logout() {
-    return this.authService.logout();
+  logout(): ApiResponse<{ message: string }> {
+    const result = this._authService.logout();
+    return ApiResponse.ok(result, 'Logged out successfully');
   }
 
-  @Get('google')
+  @Get(AUTH_ROUTES.GOOGLE)
   @UseGuards(AuthGuard('google'))
   googleAuth(): void {
-    // Passport redirects to Google
+    // Passport redirects to Google — no body needed
   }
 
-  @Get('google/callback')
+  @Get(AUTH_ROUTES.GOOGLE_CALLBACK)
   @UseGuards(AuthGuard('google'))
-  async googleCallback(@Req() req: Request, @Res() res: Response): Promise<void> {
+  async googleCallback(
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
     const googleUser = req.user as GoogleOAuthUser;
-    const result = await this.authService.googleLogin(googleUser);
+    const result = await this._authService.googleLogin(googleUser);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    res.redirect(`${frontendUrl}/auth/callback?token=${result.access_token}&refresh=${result.refresh_token}`);
+    res.redirect(
+      `${frontendUrl}/auth/callback?token=${result.access_token}&refresh=${result.refresh_token}`,
+    );
   }
 
-  @Get('callback')
+  @Get(AUTH_ROUTES.CALLBACK)
   async callback(@Req() req: Request, @Res() res: Response): Promise<void> {
     const token = req.query.token as string;
     const refresh = req.query.refresh as string;

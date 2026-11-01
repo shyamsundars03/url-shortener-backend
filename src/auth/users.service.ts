@@ -1,65 +1,72 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Injectable, Inject } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { User, UserDocument } from './schemas/user.schema.js';
+import { UserDocument } from './schemas/user.schema.js';
+import {
+  IUsersRepository,
+  USERS_REPOSITORY,
+} from './interfaces/IUsersRepository.js';
 
 @Injectable()
 export class UsersService {
-  constructor(
-    @InjectModel(User.name)
-    private readonly userModel: Model<UserDocument>,
-  ) {}
+  private readonly _usersRepository: IUsersRepository;
 
+  constructor(
+    @Inject(USERS_REPOSITORY)
+    usersRepository: IUsersRepository,
+  ) {
+    this._usersRepository = usersRepository;
+  }
+
+  // ─── Create User (hashing is a service/business concern) ────────────────────
   async create(data: {
     name: string;
     email: string;
     password?: string;
-    googleId?: string;
+    googleId?: string | null;
   }): Promise<UserDocument> {
     const hashedPassword = data.password
       ? await bcrypt.hash(data.password, 10)
       : null;
 
-    const user = new this.userModel({
+    return this._usersRepository.create({
       name: data.name,
       email: data.email,
-      password: hashedPassword,
+      hashedPassword,
       googleId: data.googleId ?? null,
     });
-
-    return user.save();
   }
 
+  // ─── Lookups ─────────────────────────────────────────────────────────────────
+
   async findByEmail(email: string): Promise<UserDocument | null> {
-    return this.userModel.findOne({ email }).exec();
+    return this._usersRepository.findByEmail(email);
   }
 
   async findById(id: string): Promise<UserDocument | null> {
-    return this.userModel.findById(id).exec();
+    return this._usersRepository.findById(id);
   }
 
   async findByGoogleId(googleId: string): Promise<UserDocument | null> {
-    return this.userModel.findOne({ googleId }).exec();
+    return this._usersRepository.findByGoogleId(googleId);
   }
 
   async findByRefreshToken(refreshToken: string): Promise<UserDocument | null> {
-    return this.userModel.findOne({ refreshToken }).exec();
+    return this._usersRepository.findByRefreshToken(refreshToken);
   }
 
-  async updateRefreshToken(userId: string, refreshToken: string | null): Promise<void> {
-    await this.userModel.findByIdAndUpdate(userId, { refreshToken }).exec();
+  // ─── Mutations ───────────────────────────────────────────────────────────────
+
+  async updateRefreshToken(
+    userId: string,
+    refreshToken: string | null,
+  ): Promise<void> {
+    return this._usersRepository.updateRefreshToken(userId, refreshToken);
   }
 
-  async linkGoogleAccount(userId: string, googleId: string): Promise<UserDocument> {
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { googleId },
-      { new: true },
-    );
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-    return user;
+  async linkGoogleAccount(
+    userId: string,
+    googleId: string,
+  ): Promise<UserDocument> {
+    return this._usersRepository.linkGoogleAccount(userId, googleId);
   }
 }

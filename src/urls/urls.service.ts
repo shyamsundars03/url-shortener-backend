@@ -1,19 +1,27 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import shortid from 'shortid';
-import { Url, UrlDocument } from './schemas/url.schema.js';
+import { UrlDocument } from './schemas/url.schema.js';
 import { CreateUrlDto } from './dto/create-url.dto.js';
+import {
+  IUrlsRepository,
+  URLS_REPOSITORY,
+  PaginatedUrlResult,
+} from './interfaces/IUrlsRepository.js';
+import { IUrlsService } from './interfaces/IUrlsService.js';
 
 @Injectable()
-export class UrlsService {
-  constructor(
-    @InjectModel(Url.name)
-    private readonly urlModel: Model<UrlDocument>,
-  ) {}
+export class UrlsService implements IUrlsService {
+  private readonly _urlsRepository: IUrlsRepository;
 
-  // ─── URL Validation ─────────────────────────────────────────────
-  private validateUrl(url: string): boolean {
+  constructor(
+    @Inject(URLS_REPOSITORY)
+    urlsRepository: IUrlsRepository,
+  ) {
+    this._urlsRepository = urlsRepository;
+  }
+
+  // ─── URL Validation (business rule) ─────────────────────────────────────────
+  private _isValidUrl(url: string): boolean {
     try {
       const parsed = new URL(url);
       return parsed.protocol === 'http:' || parsed.protocol === 'https:';
@@ -22,105 +30,91 @@ export class UrlsService {
     }
   }
 
-  // ─── Unique Short ID generation ─────────────────────────────────
-  private async generateUniqueShortId(): Promise<string> {
+  // ─── Unique Short ID Generation ──────────────────────────────────────────────
+  private async _generateUniqueShortId(): Promise<string> {
     let shortCode: string;
     let exists: UrlDocument | null;
     do {
       shortCode = shortid.generate();
-      exists = await this.urlModel.findOne({ shortUrl: shortCode }).exec();
+      exists = await this._urlsRepository.findByShortUrl(shortCode);
     } while (exists);
     return shortCode;
   }
 
-  // ─── Create Short URL ────────────────────────────────────────────
+  // ─── Create Short URL ────────────────────────────────────────────────────────
   async createShortUrl(dto: CreateUrlDto, userId: string): Promise<UrlDocument> {
-    if (!this.validateUrl(dto.originalUrl)) {
+    if (!this._isValidUrl(dto.originalUrl)) {
       throw new BadRequestException(
         'Invalid URL format. Must use http or https protocol.',
       );
     }
 
-    // Check if user already has this URL shortened
-    const existing = await this.urlModel
-      .findOne({ userId, originalUrl: dto.originalUrl })
-      .exec();
+    const existing = await this._urlsRepository.findOne({
+      userId,
+      originalUrl: dto.originalUrl,
+    });
     if (existing) {
       throw new BadRequestException(
         'This URL is already shortened. Check your links below.',
       );
     }
 
-    const shortCode = await this.generateUniqueShortId();
-    const url = new this.urlModel({
+    const shortCode = await this._generateUniqueShortId();
+
+    return this._urlsRepository.create({
       shortUrl: shortCode,
       originalUrl: dto.originalUrl,
       userId,
       lastVisited: [],
     });
-
-    return url.save();
   }
 
-  // ─── Get URLs by User with Pagination ─────────────────────────────
+  // ─── Get URLs by User with Pagination ────────────────────────────────────────
   async findByUser(
     userId: string,
     page: number = 1,
     limit: number = 10,
-  ): Promise<{ urls: UrlDocument[]; total: number; page: number; limit: number; totalPages: number }> {
+  ): Promise<PaginatedUrlResult> {
     const skip = (page - 1) * limit;
     const [urls, total] = await Promise.all([
-      this.urlModel
-        .find({ userId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
-      this.urlModel.countDocuments({ userId }).exec(),
+      this._urlsRepository.findByUser(userId, skip, limit),
+      this._urlsRepository.countByUser(userId),
     ]);
-    const totalPages = Math.ceil(total / limit);
-    return { urls, total, page, limit, totalPages };
+    return { urls, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  // ─── Get URLs by User with Search ─────────────────────────────────
+  // ─── Get URLs by User with Search ────────────────────────────────────────────
   async findByUserWithSearch(
     userId: string,
     searchTerm: string,
     page: number = 1,
     limit: number = 10,
-  ): Promise<{ urls: UrlDocument[]; total: number; page: number; limit: number; totalPages: number }> {
+  ): Promise<PaginatedUrlResult> {
     const skip = (page - 1) * limit;
     const searchRegex = new RegExp(searchTerm, 'i');
     const [urls, total] = await Promise.all([
-      this.urlModel
-        .find({ userId, originalUrl: searchRegex })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
-      this.urlModel.countDocuments({ userId, originalUrl: searchRegex }).exec(),
+      this._urlsRepository.findByUserWithSearch(userId, searchRegex, skip, limit),
+      this._urlsRepository.countByUserWithSearch(userId, searchRegex),
     ]);
-    const totalPages = Math.ceil(total / limit);
-    return { urls, total, page, limit, totalPages };
+    return { urls, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  // ─── Count URLs by User ───────────────────────────────────────────
+  // ─── Count URLs by User ───────────────────────────────────────────────────────
   async countByUser(userId: string): Promise<number> {
-    return this.urlModel.countDocuments({ userId }).exec();
+    return this._urlsRepository.countByUser(userId);
   }
 
-  // ─── Find by Short Code ──────────────────────────────────────────
+  // ─── Find by Short Code ───────────────────────────────────────────────────────
   async findByShortUrl(shortUrl: string): Promise<UrlDocument | null> {
-    const url = await this.urlModel.findOne({ shortUrl }).exec();
-    return url;
+    return this._urlsRepository.findByShortUrl(shortUrl);
   }
 
-  // ─── Record Visit ────────────────────────────────────────────────
+  // ─── Record Visit ─────────────────────────────────────────────────────────────
   async recordVisit(id: string): Promise<void> {
-    const url = await this.urlModel.findById(id).exec();
+    const url = await this._urlsRepository.findById(id);
     if (!url) return;
     const visited = Array.isArray(url.lastVisited) ? url.lastVisited : [];
     visited.push(new Date().toISOString());
-    await this.urlModel.findByIdAndUpdate(id, { lastVisited: visited }).exec();
+    await this._urlsRepository.appendVisit(id, visited);
   }
 }

@@ -9,82 +9,126 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  NotFoundException,
+  Inject,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { UrlsService } from './urls.service.js';
 import { CreateUrlDto } from './dto/create-url.dto.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { isReservedPath } from '../common/constants/reserved-paths.js';
+import { IUrlsService, URLS_SERVICE } from './interfaces/IUrlsService.js';
+import { PaginatedUrlResult } from './interfaces/IUrlsRepository.js';
+import { ApiResponse } from '../common/response/api-response.js';
+import { URL_ROUTES } from '../common/constants/api-routes.constant.js';
 
 interface AuthenticatedUser {
   id: string;
   email: string;
 }
 
+interface CreatedUrlData {
+  id: string;
+  shortUrl: string;
+  originalUrl: string;
+  userId: string;
+  lastVisited: string[];
+  shortUrlFull: string;
+}
+
+// ─── URLs Controller (authenticated CRUD) ─────────────────────────────────────
+
 @Controller()
 export class UrlsController {
-  constructor(private readonly urlsService: UrlsService) {}
+  private readonly _urlsService: IUrlsService;
 
-  // POST /link — Create a short URL (authenticated)
-  @Post('link')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.CREATED)
-  async create(@Body() dto: CreateUrlDto, @Req() req: Request) {
-    const user = req.user as AuthenticatedUser;
-    const url = await this.urlsService.createShortUrl(dto, user.id);
-    const baseUrl = process.env.BASE_URL || 'http://localhost:3001';
-    return {
-      ...url,
-      shortUrlFull: `${baseUrl}/${url.shortUrl}`,
-    };
+  constructor(
+    @Inject(URLS_SERVICE)
+    urlsService: IUrlsService,
+  ) {
+    this._urlsService = urlsService;
   }
 
-  // GET /link — List authenticated user's URLs with pagination and search
-  @Get('link')
+  @Post(URL_ROUTES.LINK)
   @UseGuards(JwtAuthGuard)
-  async findAll(@Req() req: Request) {
+  @HttpCode(HttpStatus.CREATED)
+  async create(
+    @Body() dto: CreateUrlDto,
+    @Req() req: Request,
+  ): Promise<ApiResponse<CreatedUrlData>> {
+    const user = req.user as AuthenticatedUser;
+    const url = await this._urlsService.createShortUrl(dto, user.id);
+    const baseUrl = process.env.BASE_URL || 'http://localhost:3001';
+
+    return ApiResponse.created(
+      {
+        id: url.id as string,
+        shortUrl: url.shortUrl,
+        originalUrl: url.originalUrl,
+        userId: url.userId,
+        lastVisited: url.lastVisited,
+        shortUrlFull: `${baseUrl}/${url.shortUrl}`,
+      },
+      'Short URL created successfully',
+    );
+  }
+
+  @Get(URL_ROUTES.LINK_COUNT)
+  @UseGuards(JwtAuthGuard)
+  async count(@Req() req: Request): Promise<ApiResponse<{ count: number }>> {
+    const user = req.user as AuthenticatedUser;
+    const count = await this._urlsService.countByUser(user.id);
+    return ApiResponse.ok({ count }, 'URL count retrieved');
+  }
+
+  @Get(URL_ROUTES.LINK)
+  @UseGuards(JwtAuthGuard)
+  async findAll(
+    @Req() req: Request,
+  ): Promise<ApiResponse<PaginatedUrlResult>> {
     const user = req.user as AuthenticatedUser;
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 10;
     const search = (req.query.search as string) || '';
-    
-    if (search) {
-      return this.urlsService.findByUserWithSearch(user.id, search, page, limit);
-    }
-    return this.urlsService.findByUser(user.id, page, limit);
-  }
 
-  // GET /link/count — Count authenticated user's URLs
-  @Get('link/count')
-  @UseGuards(JwtAuthGuard)
-  async count(@Req() req: Request) {
-    const user = req.user as AuthenticatedUser;
-    const count = await this.urlsService.countByUser(user.id);
-    return { count };
+    const result = search
+      ? await this._urlsService.findByUserWithSearch(user.id, search, page, limit)
+      : await this._urlsService.findByUser(user.id, page, limit);
+
+    return ApiResponse.ok(result, 'URLs retrieved successfully');
   }
 }
 
+// ─── URL Redirect Controller (public) ────────────────────────────────────────
+
 @Controller()
 export class UrlRedirectController {
-  constructor(private readonly urlsService: UrlsService) {}
+  private readonly _urlsService: IUrlsService;
 
-  // GET /:shortUrl — Redirect to original URL (public)
-  @Get(':shortUrl')
+  constructor(
+    @Inject(URLS_SERVICE)
+    urlsService: IUrlsService,
+  ) {
+    this._urlsService = urlsService;
+  }
+
+  @Get(URL_ROUTES.SHORT_URL)
   async redirect(
     @Param('shortUrl') shortUrl: string,
     @Res() res: Response,
-  ) {
+  ): Promise<void> {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
     if (isReservedPath(shortUrl)) {
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      return res.redirect(HttpStatus.FOUND, `${frontendUrl}/404`);
+      res.redirect(HttpStatus.FOUND, `${frontendUrl}/404`);
+      return;
     }
-    const url = await this.urlsService.findByShortUrl(shortUrl);
+
+    const url = await this._urlsService.findByShortUrl(shortUrl);
     if (!url) {
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      return res.redirect(HttpStatus.FOUND, `${frontendUrl}/404`);
+      res.redirect(HttpStatus.FOUND, `${frontendUrl}/404`);
+      return;
     }
-    await this.urlsService.recordVisit(url.id);
-    return res.redirect(HttpStatus.FOUND, url.originalUrl);
+
+    await this._urlsService.recordVisit(url.id as string);
+    res.redirect(HttpStatus.FOUND, url.originalUrl);
   }
 }
